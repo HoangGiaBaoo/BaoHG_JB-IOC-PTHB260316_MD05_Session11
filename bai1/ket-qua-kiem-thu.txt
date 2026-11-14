@@ -1,0 +1,66 @@
+
+==== 1) Kiểm tra cú pháp file cấu hình ====
+[nginx]$ nginx -t
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+
+==== 2) Người dùng gõ http://domain.com (cổng 80 mặc định, không có :3000) ====
+[client]$ curl -si http://domain.com/
+HTTP/1.1 200 OK
+Server: nginx/1.31.8
+Date: Sat, 14 Nov 2026 18:29:03 GMT
+Content-Type: text/html
+Content-Length: 526
+Connection: keep-alive
+Last-Modified: Sat, 14 Nov 2026 18:28:58 GMT
+ETag: "6af8a86a-20e"
+X-Served-By: frontend-react:3000
+Accept-Ranges: bytes
+
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="My E-commerce - mua sắm trực tuyến">
+  <title>My E-commerce</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+  <noscript>Bạn cần bật JavaScript để chạy ứng dụng này.</noscript>
+  <div id="root">My E-commerce - React frontend (port 3000)</div>
+  <script src="/static/js/main.js"></script>
+</body>
+</html>
+
+[client]$ curl -s -o /dev/null -w 'GET /products -> HTTP %{http_code}\n' http://domain.com/products
+GET /products -> HTTP 200
+
+
+==== 3) BẪY: ứng dụng React ở cổng 3000 bị sập ====
+[vps]$ docker stop ss11-frontend
+ss11-frontend
+
+[client]$ curl -si http://domain.com/
+HTTP/1.1 502 Bad Gateway
+Server: nginx/1.31.8
+Date: Sat, 14 Nov 2026 18:29:04 GMT
+Content-Type: text/html
+Content-Length: 157
+Connection: keep-alive
+
+<html>
+<head><title>502 Bad Gateway</title></head>
+<body>
+<center><h1>502 Bad Gateway</h1></center>
+<hr><center>nginx/1.31.8</center>
+</body>
+</html>
+
+
+==== 4) Nginx ghi lý do vào error log ====
+[vps]$ docker logs ss11-proxy 2>&1 | grep -m 2 'connect() failed'
+2026/11/14 18:29:04 [error] 29#29: *5 connect() failed (111: Connection refused) while connecting to upstream, client: 172.19.0.3, server: domain.com, request: "GET / HTTP/1.1", upstream: "http://[::1]:3000/", host: "domain.com"
+2026/11/14 18:29:04 [error] 29#29: *5 connect() failed (111: Connection refused) while connecting to upstream, client: 172.19.0.3, server: domain.com, request: "GET / HTTP/1.1", upstream: "http://127.0.0.1:3000/", host: "domain.com"
+

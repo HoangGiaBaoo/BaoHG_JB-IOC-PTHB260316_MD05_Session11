@@ -1,0 +1,50 @@
+# /etc/nginx/sites-available/default
+# Bài 4: cấu hình bài 2 + tăng giới hạn upload + bật nén Gzip
+# Các dòng thêm mới được đánh dấu [BÀI 4].
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    server_name domain.com www.domain.com;
+
+    # [BÀI 4] Kích thước body request tối đa (file upload). Mặc định chỉ 1m,
+    #         nên ảnh avatar 3MB bị Nginx chặn với lỗi 413 Request Entity Too Large.
+    client_max_body_size 10M;
+
+    # [BÀI 4] Nén Gzip các file dạng văn bản trước khi gửi về client
+    gzip on;
+    gzip_comp_level 5;        # 1 = nhanh, nén ít ... 9 = chậm, nén nhiều. 5 là mức cân bằng
+    gzip_min_length 256;      # file nhỏ hơn 256 byte thì nén không có lợi
+    gzip_vary on;             # thêm "Vary: Accept-Encoding" để CDN/proxy cache lưu riêng bản nén và bản gốc
+    gzip_proxied any;         # vẫn nén khi request đi qua một proxy/CDN khác (có header Via)
+    gzip_types                # text/html luôn được nén khi "gzip on", không cần (và không được) liệt kê lại
+        text/plain
+        text/css
+        text/javascript
+        application/javascript
+        application/json
+        application/xml
+        image/svg+xml;
+    # Không thêm ảnh JPG/PNG, video, file .zip: chúng đã được nén sẵn, nén lại chỉ tốn CPU.
+
+    location /api/ {
+        proxy_pass http://localhost:8080;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        proxy_pass http://localhost:3000;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

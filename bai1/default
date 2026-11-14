@@ -1,0 +1,23 @@
+# /etc/nginx/sites-available/default
+# Bài 1: Reverse proxy - người dùng vào http://domain.com (cổng 80)
+#        Nginx chuyển tiếp request tới ứng dụng React chạy nội bộ ở localhost:3000
+
+server {
+    listen 80 default_server;          # Nhận mọi request HTTP đến cổng 80 (IPv4)
+    listen [::]:80 default_server;     # ... và IPv6
+
+    server_name domain.com www.domain.com;
+
+    location / {
+        # Chuyển tiếp mọi request tới ứng dụng React ở cổng 3000 trên chính VPS.
+        # Cổng 3000 chỉ cần mở nội bộ, không cần mở ra Internet.
+        proxy_pass http://localhost:3000;
+
+        # Giữ lại thông tin gốc của request khi chuyển tiếp
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;                       # domain người dùng đã gõ
+        proxy_set_header X-Real-IP         $remote_addr;                # IP thật của người dùng
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;  # chuỗi IP: client, proxy...
+        proxy_set_header X-Forwarded-Proto $scheme;                     # http hay https
+    }
+}

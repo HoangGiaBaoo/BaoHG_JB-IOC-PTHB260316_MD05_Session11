@@ -1,0 +1,49 @@
+
+==== 1) Kiểm tra cú pháp file cấu hình ====
+[nginx]$ nginx -t
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+
+==== 2) IP của máy khách ====
+[client]$ hostname -i
+172.19.0.3
+
+
+==== 3) Định tuyến theo đường dẫn (header X-Served-By cho biết service nào trả lời) ====
+[client]$ for p in / /about /products /static/js/main.js /api/products "/api/orders?page=2" /api; do printf "%-20s -> HTTP %s  %s\n" "$p" "$(curl -s -o /dev/null -w "%{http_code}" "http://domain.com$p")" "$(curl -s -o /dev/null -D - "http://domain.com$p" | grep -iE "^(x-served-by|location)" | tr -d "\r")"; done
+/                    -> HTTP 200  X-Served-By: frontend-react:3000
+/about               -> HTTP 200  X-Served-By: frontend-react:3000
+/products            -> HTTP 200  X-Served-By: frontend-react:3000
+/static/js/main.js   -> HTTP 200  X-Served-By: frontend-react:3000
+/api/products        -> HTTP 200  X-Served-By: api-gateway:8080
+/api/orders?page=2   -> HTTP 200  X-Served-By: api-gateway:8080
+/api                 -> HTTP 301  Location: http://domain.com/api/
+
+
+==== 4) Backend nhận được gì? (cấu hình đầy đủ header) ====
+[client]$ curl -s 'http://domain.com/api/orders?page=2'
+{"service":"api-gateway:8080","method":"GET","uri":"/api/orders?page=2","host":"domain.com","remote_addr":"::1","x_real_ip":"172.19.0.3","x_forwarded_for":"172.19.0.3","x_forwarded_proto":"http","body_bytes":""}
+
+
+==== 5) BẪY: xóa hết các dòng proxy_set_header rồi reload ====
+[vps]$ grep -v proxy_set_header ~/ss11/bai2/default > ~/ss11-run/conf.d/default.conf
+
+[nginx]$ nginx -t && nginx -s reload
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+2026/11/14 18:30:12 [notice] 36#36: signal process started
+
+[client]$ curl -s 'http://domain.com/api/orders?page=2'
+{"service":"api-gateway:8080","method":"GET","uri":"/api/orders?page=2","host":"localhost:8080","remote_addr":"::1","x_real_ip":"","x_forwarded_for":"","x_forwarded_proto":"","body_bytes":""}
+
+
+==== 6) Khôi phục cấu hình. Client tự gửi kèm X-Forwarded-For giả mạo ====
+[vps]$ cp ~/ss11/bai2/default ~/ss11-run/conf.d/default.conf
+
+[nginx]$ nginx -s reload
+2026/11/14 18:30:13 [notice] 44#44: signal process started
+
+[client]$ curl -s -H 'X-Forwarded-For: 6.6.6.6' 'http://domain.com/api/orders?page=2'
+{"service":"api-gateway:8080","method":"GET","uri":"/api/orders?page=2","host":"domain.com","remote_addr":"::1","x_real_ip":"172.19.0.3","x_forwarded_for":"6.6.6.6, 172.19.0.3","x_forwarded_proto":"http","body_bytes":""}
+

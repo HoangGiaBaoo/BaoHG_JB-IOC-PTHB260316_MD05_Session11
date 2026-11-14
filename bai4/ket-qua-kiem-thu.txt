@@ -1,0 +1,126 @@
+
+==== 0) Tạo 3 file ảnh giả 3MB, 9MB, 11MB ở máy khách ====
+[client]$ for f in 3 9 11; do head -c $((f*1024*1024)) /dev/urandom > /tmp/avatar-${f}mb.jpg; done; ls -lh /tmp/avatar-*
+-rw-r--r--    1 root     root       11.0M Nov 14 18:31 /tmp/avatar-11mb.jpg
+-rw-r--r--    1 root     root        3.0M Nov 14 18:31 /tmp/avatar-3mb.jpg
+-rw-r--r--    1 root     root        9.0M Nov 14 18:31 /tmp/avatar-9mb.jpg
+
+
+==== 1) TRƯỚC khi sửa: upload avatar ====
+[client]$ for f in 3 9 11; do printf "Upload avatar %2sMB -> HTTP %s\n" $f $(curl -s -o /dev/null -w "%{http_code}" -F "avatar=@/tmp/avatar-${f}mb.jpg" http://domain.com/api/users/me/avatar); done
+Upload avatar  3MB -> HTTP 413
+Upload avatar  9MB -> HTTP 413
+Upload avatar 11MB -> HTTP 413
+
+[client]$ curl -s -F avatar=@/tmp/avatar-3mb.jpg http://domain.com/api/users/me/avatar
+<html>
+<head><title>413 Request Entity Too Large</title></head>
+<body>
+<center><h1>413 Request Entity Too Large</h1></center>
+<hr><center>nginx/1.31.8</center>
+</body>
+</html>
+
+
+==== 2) TRƯỚC khi sửa: kích thước tải về khi trình duyệt gửi Accept-Encoding: gzip ====
+[client]$ printf "%-22s %10s %12s   %s\n" "Path" "Original" "Downloaded" "Content-Encoding"; for p in / /static/css/main.css /static/js/main.js /api/products; do raw=$(curl -s -o /dev/null -w "%{size_download}" "http://domain.com$p"); gz=$(curl -s -o /dev/null -H "Accept-Encoding: gzip" -w "%{size_download}" "http://domain.com$p"); enc=$(curl -s -o /dev/null -D - -H "Accept-Encoding: gzip" "http://domain.com$p" | grep -i "^content-encoding" | cut -d" " -f2 | tr -d "\r"); printf "%-22s %10s %12s   %s\n" "$p" "$raw" "$gz" "${enc:-(không nén)}"; done
+Path                     Original   Downloaded   Content-Encoding
+/                             526          526   (không nén)
+/static/css/main.css       232803       232803   (không nén)
+/static/js/main.js         131835       131835   (không nén)
+/api/products                4781         4781   (không nén)
+
+
+==== 3) Áp dụng cấu hình bài 4, LUÔN kiểm tra cú pháp trước ====
+[vps]$ cp ~/ss11/bai4/default ~/ss11-run/conf.d/default.conf
+
+[nginx]$ nginx -t
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+
+==== 4) Reload trong lúc khách hàng đang truy cập (nginx -s reload = systemctl reload nginx) ====
+[nginx]$ nginx -s reload
+2026/11/14 18:31:19 [notice] 36#36: signal process started
+
+Kết quả 60 request của khách hàng trong lúc thao tác (số lần | mã HTTP):
+        60 200
+   (000 = không kết nối được tới Nginx, khách hàng thấy trang lỗi)
+
+==== 5) SAU khi sửa: upload avatar ====
+[client]$ for f in 3 9 11; do printf "Upload avatar %2sMB -> HTTP %s\n" $f $(curl -s -o /dev/null -w "%{http_code}" -F "avatar=@/tmp/avatar-${f}mb.jpg" http://domain.com/api/users/me/avatar); done
+Upload avatar  3MB -> HTTP 200
+Upload avatar  9MB -> HTTP 200
+Upload avatar 11MB -> HTTP 413
+
+[client]$ curl -s -F avatar=@/tmp/avatar-3mb.jpg http://domain.com/api/users/me/avatar
+{"service":"api-gateway:8080","method":"POST","uri":"/api/users/me/avatar","host":"domain.com","remote_addr":"::1","x_real_ip":"172.19.0.3","x_forwarded_for":"172.19.0.3","x_forwarded_proto":"http","body_bytes":"3145934"}
+
+
+==== 6) SAU khi sửa: nén gzip ====
+[client]$ printf "%-22s %10s %12s   %s\n" "Path" "Original" "Downloaded" "Content-Encoding"; for p in / /static/css/main.css /static/js/main.js /api/products; do raw=$(curl -s -o /dev/null -w "%{size_download}" "http://domain.com$p"); gz=$(curl -s -o /dev/null -H "Accept-Encoding: gzip" -w "%{size_download}" "http://domain.com$p"); enc=$(curl -s -o /dev/null -D - -H "Accept-Encoding: gzip" "http://domain.com$p" | grep -i "^content-encoding" | cut -d" " -f2 | tr -d "\r"); printf "%-22s %10s %12s   %s\n" "$p" "$raw" "$gz" "${enc:-(không nén)}"; done
+Path                     Original   Downloaded   Content-Encoding
+/                             526          356   gzip
+/static/css/main.css       232803        31840   gzip
+/static/js/main.js         131835        43387   gzip
+/api/products                4781          677   gzip
+
+[client]$ curl -s -o /dev/null -D - -H 'Accept-Encoding: gzip' http://domain.com/static/js/main.js | grep -iE '^(content-type|content-encoding|vary)'
+Content-Type: application/javascript
+Vary: Accept-Encoding
+Content-Encoding: gzip
+
+
+==== 7) So sánh: restart trong lúc khách hàng đang truy cập (dừng hẳn tiến trình rồi khởi động lại, như systemctl restart nginx) ====
+[vps]$ docker restart ss11-proxy
+ss11-proxy
+
+Kết quả 60 request của khách hàng trong lúc thao tác (số lần | mã HTTP):
+         2 000
+        58 200
+   (000 = không kết nối được tới Nginx, khách hàng thấy trang lỗi)
+
+==== 8) BẪY CHÍ MẠNG: file cấu hình có lỗi (gõ nhầm 10M thành 10MB) ====
+[vps]$ sed 's/client_max_body_size 10M;/client_max_body_size 10MB;/' ~/ss11/bai4/default > ~/ss11-run/conf.d/default.conf && grep -n client_max_body_size ~/ss11-run/conf.d/default.conf
+13:    client_max_body_size 10MB;
+
+[nginx]$ nginx -t
+2026/11/14 18:31:30 [emerg] 30#30: "client_max_body_size" directive invalid value in /etc/nginx/conf.d/default.conf:13
+nginx: [emerg] "client_max_body_size" directive invalid value in /etc/nginx/conf.d/default.conf:13
+nginx: configuration file /etc/nginx/nginx.conf test failed
+
+
+==== 8a) Nếu dùng RELOAD: Nginx từ chối cấu hình lỗi, vẫn chạy cấu hình cũ ====
+[nginx]$ nginx -s reload
+2026/11/14 18:31:30 [emerg] 36#36: "client_max_body_size" directive invalid value in /etc/nginx/conf.d/default.conf:13
+nginx: [emerg] "client_max_body_size" directive invalid value in /etc/nginx/conf.d/default.conf:13
+
+[client]$ curl -s -o /dev/null -w 'Trang chủ -> HTTP %{http_code}\n' http://domain.com/
+Trang chủ -> HTTP 200
+
+
+==== 8b) Nếu dùng RESTART: Nginx dừng hẳn rồi không khởi động lại được -> toàn bộ website sập ====
+[vps]$ docker restart ss11-proxy; sleep 2; docker ps -a --filter name=ss11-proxy --format '{{.Names}}: {{.Status}}'
+ss11-proxy
+ss11-proxy: Exited (1) 2 seconds ago
+
+[vps]$ docker logs ss11-proxy 2>&1 | grep emerg | tail -n 1
+nginx: [emerg] "client_max_body_size" directive invalid value in /etc/nginx/conf.d/default.conf:13
+
+[client]$ curl -sS -o /dev/null -w 'Trang chủ -> HTTP %{http_code}\n' --max-time 3 http://domain.com/
+Trang chủ -> HTTP 000
+curl: (7) Failed to connect to domain.com:80 after 73 ms: Could not connect to server
+
+
+==== 9) Sửa lại cấu hình đúng, kiểm tra rồi mới khởi động ====
+[vps]$ cp ~/ss11/bai4/default ~/ss11-run/conf.d/default.conf
+
+[vps]$ docker run --rm --entrypoint nginx -v ~/ss11-run/conf.d:/etc/nginx/conf.d:ro nginx:alpine -t
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+[vps]$ docker start ss11-proxy >/dev/null; sleep 2
+
+[client]$ curl -s -o /dev/null -w 'Trang chủ -> HTTP %{http_code}\n' http://domain.com/
+Trang chủ -> HTTP 200
+
